@@ -4,11 +4,22 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.CreateUmbracoBuilder()
     .AddBackOffice()
     .AddWebsite()
+    .AddDeliveryApi()
     .AddComposers()
     .Build();
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AngularApp", policy =>
+        policy.WithOrigins("http://localhost:4200")
+              .AllowAnyHeader()
+              .AllowAnyMethod());
+});
+
+
 WebApplication app = builder.Build();
 
+app.UseCors("AngularApp");
 
 await app.BootUmbracoAsync();
 

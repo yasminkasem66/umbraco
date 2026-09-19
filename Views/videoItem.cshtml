@@ -1,0 +1,5 @@
+﻿@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+<h1>@Model.Value("title")</h1>
+<video width="640" controls>
+    <source src="@Model.Value("videoUrl")" type="video/mp4">
+</video>
