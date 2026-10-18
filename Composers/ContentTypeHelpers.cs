@@ -19,6 +19,7 @@ public class ContentTypeHelpers
     private readonly IShortStringHelper _shortStringHelper;
     private readonly IDataTypeService _dataTypeService;
     private readonly IContentTypeService _contentTypeService;
+    private readonly IMediaTypeService _mediaTypeService;
     private readonly PropertyEditorCollection _propertyEditors;
     private readonly IConfigurationEditorJsonSerializer _configurationEditorJsonSerializer;
 
@@ -26,17 +27,19 @@ public class ContentTypeHelpers
         IShortStringHelper shortStringHelper,
         IDataTypeService dataTypeService,
         IContentTypeService contentTypeService,
+        IMediaTypeService mediaTypeService,
         PropertyEditorCollection propertyEditors,
         IConfigurationEditorJsonSerializer configurationEditorJsonSerializer)
     {
         _shortStringHelper = shortStringHelper;
         _dataTypeService = dataTypeService;
         _contentTypeService = contentTypeService;
+        _mediaTypeService = mediaTypeService;
         _propertyEditors = propertyEditors;
         _configurationEditorJsonSerializer = configurationEditorJsonSerializer;
     }
 
-    public async Task<IDataType> EnsureDataTypeAsync(Guid seedingUserKey, string name, string editorAlias, object? configurationObject = null)
+    public async Task<IDataType> EnsureDataTypeAsync(Guid seedingUserKey, string name, string editorAlias, string editorUiAlias, object? configurationObject = null)
     {
         IDataEditor editor = _propertyEditors[editorAlias]
             ?? throw new InvalidOperationException($"No property editor registered for alias '{editorAlias}'.");
@@ -49,13 +52,22 @@ public class ContentTypeHelpers
         if (existing is not null)
         {
             // Create-if-missing alone isn't enough for a code-first content architecture
-            // (Constitution Principle III): if the config in code changes after a Data Type was
-            // already seeded once, an environment that seeded it earlier would otherwise keep the
-            // stale configuration forever, silently drifting from what the code now says. This
-            // self-corrects it instead, the same way creation itself is idempotent.
-            if (!ConfigurationMatches(existing.ConfigurationData, intendedConfig))
+            // (Constitution Principle III): if the config (or, as happened here, the UI alias) in
+            // code changes after a Data Type was already seeded once, an environment that seeded
+            // it earlier would otherwise keep the stale value forever, silently drifting from what
+            // the code now says. This self-corrects it instead, the same way creation itself is
+            // idempotent. EditorUiAlias in particular was never set at all before this fix, which
+            // is why every custom Data Type showed "configured property editor UI could not be
+            // found" in the backoffice — the IDataType model distinguishes the .NET-level
+            // "property editor" (editorAlias) from the backoffice web component that renders it
+            // (editorUiAlias), and only the former was ever being set.
+            bool needsUpdate = !ConfigurationMatches(existing.ConfigurationData, intendedConfig)
+                || existing.EditorUiAlias != editorUiAlias;
+
+            if (needsUpdate)
             {
                 existing.ConfigurationData = intendedConfig ?? new Dictionary<string, object>();
+                existing.EditorUiAlias = editorUiAlias;
                 Attempt<IDataType, DataTypeOperationStatus> updateAttempt = await _dataTypeService.UpdateAsync(existing, seedingUserKey);
                 if (updateAttempt.Success is false)
                 {
@@ -71,6 +83,7 @@ public class ContentTypeHelpers
         var dataType = new DataType(editor, _configurationEditorJsonSerializer)
         {
             Name = name,
+            EditorUiAlias = editorUiAlias,
         };
 
         if (intendedConfig is not null)
@@ -222,7 +235,7 @@ public class ContentTypeHelpers
                 .ToArray(),
         };
 
-        return await EnsureDataTypeAsync(seedingUserKey, name, Constants.PropertyEditors.Aliases.BlockList, configuration);
+        return await EnsureDataTypeAsync(seedingUserKey, name, Constants.PropertyEditors.Aliases.BlockList, "Umb.PropertyEditorUi.BlockList", configuration);
     }
 
     // Shared, reusable element types (research.md-level "shared infra" — reused as-is across the
@@ -305,45 +318,55 @@ public class ContentTypeHelpers
     }
 
     public Task<IDataType> TextstringDataTypeAsync(Guid seedingUserKey) =>
-        EnsureDataTypeAsync(seedingUserKey, "Textstring", Constants.PropertyEditors.Aliases.TextBox);
+        EnsureDataTypeAsync(seedingUserKey, "Textstring", Constants.PropertyEditors.Aliases.TextBox, "Umb.PropertyEditorUi.TextBox");
 
     public Task<IDataType> TextareaDataTypeAsync(Guid seedingUserKey) =>
-        EnsureDataTypeAsync(seedingUserKey, "Textarea", Constants.PropertyEditors.Aliases.TextArea);
+        EnsureDataTypeAsync(seedingUserKey, "Textarea", Constants.PropertyEditors.Aliases.TextArea, "Umb.PropertyEditorUi.TextArea");
 
     public Task<IDataType> RichTextDataTypeAsync(Guid seedingUserKey) =>
-        EnsureDataTypeAsync(seedingUserKey, "Rich Text Editor", Constants.PropertyEditors.Aliases.RichText);
+        EnsureDataTypeAsync(seedingUserKey, "Rich Text Editor", Constants.PropertyEditors.Aliases.RichText, "Umb.PropertyEditorUi.Tiptap");
 
     public Task<IDataType> BooleanDataTypeAsync(Guid seedingUserKey) =>
-        EnsureDataTypeAsync(seedingUserKey, "True/false", Constants.PropertyEditors.Aliases.Boolean);
+        EnsureDataTypeAsync(seedingUserKey, "True/false", Constants.PropertyEditors.Aliases.Boolean, "Umb.PropertyEditorUi.Toggle");
 
     public Task<IDataType> DatePickerDataTypeAsync(Guid seedingUserKey) =>
-        EnsureDataTypeAsync(seedingUserKey, "Date Picker", Constants.PropertyEditors.Aliases.DateTime);
+        EnsureDataTypeAsync(seedingUserKey, "Date Picker", Constants.PropertyEditors.Aliases.DateTime, "Umb.PropertyEditorUi.DatePicker");
 
     public Task<IDataType> IntegerDataTypeAsync(Guid seedingUserKey) =>
-        EnsureDataTypeAsync(seedingUserKey, "Numeric", Constants.PropertyEditors.Aliases.Integer);
+        EnsureDataTypeAsync(seedingUserKey, "Numeric", Constants.PropertyEditors.Aliases.Integer, "Umb.PropertyEditorUi.Integer");
 
     public Task<IDataType> TagsDataTypeAsync(Guid seedingUserKey) =>
-        EnsureDataTypeAsync(seedingUserKey, "Tags", Constants.PropertyEditors.Aliases.Tags);
+        EnsureDataTypeAsync(seedingUserKey, "Tags", Constants.PropertyEditors.Aliases.Tags, "Umb.PropertyEditorUi.Tags");
 
     public Task<IDataType> MediaPickerDataTypeAsync(Guid seedingUserKey, string name, bool multiple) =>
         EnsureDataTypeAsync(
             seedingUserKey,
             name,
             Constants.PropertyEditors.Aliases.MediaPicker3,
+            "Umb.PropertyEditorUi.MediaPicker",
             new MediaPicker3Configuration
             {
-                // Must match the real media type alias exactly (it's a case-sensitive string
-                // compare) — "image" (lowercase) silently matched nothing and left every Media
-                // Picker field with zero allowed types to pick or upload.
-                Filter = Constants.Conventions.MediaTypes.Image,
+                // The backoffice Media Picker's allow-list is NOT a media type alias — decompiling
+                // the actual property-editor-ui-media-picker / input-upload-field backoffice
+                // components showed the stored "filter" string is split on commas and each piece
+                // compared via `allowedContentTypeIds.includes(mediaType.unique)`, i.e. it must be
+                // the media type's GUID key. An alias string here (whatever casing) always fails
+                // that comparison and silently leaves the picker/upload with nothing allowed —
+                // this was wrong twice before this fix, first as "image" then as "Image".
+                Filter = GetImageMediaTypeKey().ToString(),
                 Multiple = multiple,
             });
+
+    private Guid GetImageMediaTypeKey() =>
+        _mediaTypeService.Get(Constants.Conventions.MediaTypes.Image)?.Key
+            ?? throw new InvalidOperationException($"Built-in media type '{Constants.Conventions.MediaTypes.Image}' was not found.");
 
     public Task<IDataType> ContentPickerDataTypeAsync(Guid seedingUserKey, string name, Guid allowedContentTypeKey) =>
         EnsureDataTypeAsync(
             seedingUserKey,
             name,
             Constants.PropertyEditors.Aliases.ContentPicker,
+            "Umb.PropertyEditorUi.DocumentPicker",
             new ContentPickerConfiguration
             {
                 AllowedContentTypeIds = allowedContentTypeKey.ToString(),
