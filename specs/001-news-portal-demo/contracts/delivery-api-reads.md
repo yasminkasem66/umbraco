@@ -36,6 +36,22 @@ GET /umbraco/delivery/api/v2/content/item/{path}
 
 - 200 with full article payload for a published article.
 - 404 for a non-existent id, or an article that exists only as Draft (spec Scenarios 2-3).
+- 404 for a valid, published id requested in a language it has no translation for — **verified
+  identical** to the non-existent-id 404 above (same status, same empty body, no distinguishing
+  header). Per spec.md FR-017, a caller that needs to tell "doesn't exist" apart from "not
+  translated" retries the same id with no `Accept-Language` header / no `culture` query param:
+
+  ```
+  GET /umbraco/delivery/api/v2/content/item/{id}          (no language qualifier)
+  ```
+
+  - 200 → the id is valid; the article just has no translation in the originally requested
+    language.
+  - 404 → the id itself does not exist.
+
+  This retry is only needed when a detail view is reached by something other than following a
+  list result — the list response's `cultures` map (see "Browse / filter / search" above) already
+  tells a caller which languages an item has before it navigates to the detail view.
 
 ## Featured Articles (User Story 3)
 

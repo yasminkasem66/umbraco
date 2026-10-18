@@ -62,6 +62,14 @@ Delivery API filter/sort registration (research.md §2):
 - `tags` → `IContentIndexHandler` field, `FieldType.StringRaw` (multi-value), filter target for
   keyword search (User Story 1); title/summary text search uses the Delivery API's built-in
   full-text query, tags search uses this explicit field.
+- `publishedDate` → `IContentIndexHandler` field, `FieldType.Date`, sort target for the default
+  "newest first" article ordering (User Story 1). Needed because the built-in sorts only cover
+  `createDate`/`updateDate`/`name`/`level`/`sortOrder` — `publishedDate` is an editorial date
+  distinct from `createDate` and gets no built-in sort of its own.
+
+Every field above also needs a matching `IFilterHandler` (for `category`/`tags`/`isFeatured`) or
+`ISortHandler` (for `featuredOrder`/`publishedDate`) — `IContentIndexHandler` alone only indexes a
+field, it does not make `filter=`/`sort=` recognize it (research.md §2).
 
 Featured-set query shape: `filter=contentType:newsArticle&filter=isFeatured:true&sort=featuredOrder
 :asc&sort=createDate:asc` — the `createDate` secondary sort gives the tie-break the spec's Edge

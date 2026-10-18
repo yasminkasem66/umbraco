@@ -8,7 +8,8 @@
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:25050", "type": "string" },
     { "key": "articleId", "value": "", "type": "string", "description": "Copy an item's \"id\" from News > Browse all" },
-    { "key": "categoryId", "value": "", "type": "string", "description": "Copy an item's \"id\" from News > List categories" }
+    { "key": "categoryId", "value": "", "type": "string", "description": "Copy an item's \"id\" from News > List categories" },
+    { "key": "englishOnlyArticleId", "value": "", "type": "string", "description": "Copy the id of an item from \"Browse all\" whose cultures only list en-US, to exercise the not-translated vs not-found disambiguation (spec.md FR-017)" }
   ],
   "item": [
     {
@@ -132,6 +133,31 @@
               "path": ["umbraco", "delivery", "api", "v2", "content", "item", "{{articleId}}"]
             },
             "description": "English-only seeded articles return 404 here — demonstrates the no-fallback bilingual behavior (spec.md FR-017)."
+          }
+        },
+        {
+          "name": "Article detail - not translated (untranslated id, ar)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept-Language", "value": "ar" }],
+            "url": {
+              "raw": "{{baseUrl}}/umbraco/delivery/api/v2/content/item/{{englishOnlyArticleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["umbraco", "delivery", "api", "v2", "content", "item", "{{englishOnlyArticleId}}"]
+            },
+            "description": "Set englishOnlyArticleId from \"Browse all\" (pick an item whose cultures only list en-US). Expect 404 — byte-for-byte identical to \"Article detail - not found\" below (same status, Content-Length: 0, no distinguishing header). Compare the two side by side."
+          }
+        },
+        {
+          "name": "Article detail - disambiguation retry (same id, no language header)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/umbraco/delivery/api/v2/content/item/{{englishOnlyArticleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["umbraco", "delivery", "api", "v2", "content", "item", "{{englishOnlyArticleId}}"]
+            },
+            "description": "Same id as the request above, with no Accept-Language header (falls back to the default language). Expect 200 — proves the id is valid and the prior 404 meant \"not translated,\" not \"doesn't exist\" (spec.md FR-017's documented disambiguation check)."
           }
         },
         {

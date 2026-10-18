@@ -36,6 +36,11 @@ Take one article id/path from step 2 and call the detail request in
 [contracts/delivery-api-reads.md](contracts/delivery-api-reads.md). Confirm every field in the
 News Article row of data-model.md is present. Then try a random/nonexistent id and confirm 404.
 
+Then take an English-only article (seeded without an Arabic variant) and request its detail with
+`Accept-Language: ar` — confirm this also 404s, identically to the nonexistent-id case. Retry the
+same id with no language header and confirm it now returns 200, demonstrating the disambiguation
+check from spec.md FR-017 / contracts/delivery-api-reads.md.
+
 ## 4. Featured Articles (User Story 3)
 
 Mark 2-3 seeded articles `isFeatured` with distinct `featuredOrder` values in the backoffice, call

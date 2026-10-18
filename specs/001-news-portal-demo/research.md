@@ -60,7 +60,7 @@ application during implementation — via runtime reflection against the install
 both extending `IQueryHandler.CanHandle(string)`) to get the exact member names and signatures
 rather than continuing to guess from XML doc summaries alone.
 
-**Two related pitfalls found the same way** (worth recording since they cost real debugging time):
+**Three related pitfalls found the same way** (worth recording since they cost real debugging time):
 
 - A Block List property's stored JSON needs a populated `expose` array
   (`Umbraco.Cms.Core.Models.Blocks.BlockItemVariation` entries, one per block, with `culture: null`
@@ -74,6 +74,13 @@ rather than continuing to guess from XML doc summaries alone.
   content item. Passing that per-pass culture straight through to `content.GetValue<T>(alias,
   culture)` silently returns `null` for the invariant property, so nothing gets indexed and every
   `filter=category:...` request matches zero articles with no error at all.
+- The built-in sorts (`createDate`, `updateDate`, `name`, `level`, `sortOrder`) do not include any
+  editorial/custom date field — `sort=publishedDate:desc`, the documented default list ordering,
+  400'd with `"Sort option not found"` until `publishedDate` was given the same
+  `IContentIndexHandler` + `ISortHandler` treatment as `featuredOrder`. This was caught only while
+  writing a frontend hand-off document and pasting in a "realistic" example request — a reminder
+  that every query example in hand-off documentation should be run against the live app, not
+  assumed correct because a structurally similar one (`featuredOrder`) already worked.
 
 **Alternatives considered**: The community package `Umbraco.Community.DeliveryApiExtensions` is
 present in the local NuGet cache (version 17.0.0 only — no 18.1.1 build), and would add an extra

@@ -6,9 +6,10 @@ using Umbraco.Cms.Core.Serialization;
 namespace UmbracoDemo.DeliveryApi.IndexHandlers;
 
 /// <summary>
-/// Registers newsArticle's category/tags/isFeatured/featuredOrder as filterable/sortable Delivery
-/// API fields (research.md §2, data-model.md "Delivery API filter/sort registration"). Used by
-/// User Story 1 (category/tag filtering) and User Story 3 (featured set).
+/// Registers newsArticle's category/tags/isFeatured/featuredOrder/publishedDate as
+/// filterable/sortable Delivery API fields (research.md §2, data-model.md "Delivery API
+/// filter/sort registration"). Used by User Story 1 (category/tag filtering, default sort) and
+/// User Story 3 (featured set).
 /// </summary>
 public class NewsArticleIndexHandler : IContentIndexHandler
 {
@@ -48,6 +49,17 @@ public class NewsArticleIndexHandler : IContentIndexHandler
         {
             FieldName = "featuredOrder",
             FieldType = FieldType.Number,
+            VariesByCulture = false,
+        };
+
+        // Built-in sorts only cover createDate/updateDate/name/level/sortOrder — publishedDate is
+        // an editorial date distinct from createDate, so it needs the same custom
+        // index+filter/sort-handler treatment as the other custom fields (research.md §2) for the
+        // "newest first" default sort documented in contracts/delivery-api-reads.md to work.
+        yield return new IndexField
+        {
+            FieldName = "publishedDate",
+            FieldType = FieldType.Date,
             VariesByCulture = false,
         };
     }
@@ -95,6 +107,14 @@ public class NewsArticleIndexHandler : IContentIndexHandler
         {
             FieldName = "featuredOrder",
             Values = [featuredOrder],
+        };
+
+        // "publishedDate" is invariant (data-model.md), same null-culture reasoning as "category".
+        DateTime publishedDate = content.GetValue<DateTime>("publishedDate", null);
+        yield return new IndexFieldValue
+        {
+            FieldName = "publishedDate",
+            Values = [publishedDate],
         };
     }
 

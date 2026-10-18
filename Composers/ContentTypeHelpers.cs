@@ -38,24 +38,44 @@ public class ContentTypeHelpers
 
     public async Task<IDataType> EnsureDataTypeAsync(Guid seedingUserKey, string name, string editorAlias, object? configurationObject = null)
     {
+        IDataEditor editor = _propertyEditors[editorAlias]
+            ?? throw new InvalidOperationException($"No property editor registered for alias '{editorAlias}'.");
+
+        IDictionary<string, object>? intendedConfig = configurationObject is null
+            ? null
+            : editor.GetConfigurationEditor().FromConfigurationObject(configurationObject, _configurationEditorJsonSerializer);
+
         IDataType? existing = await _dataTypeService.GetAsync(name);
         if (existing is not null)
         {
+            // Create-if-missing alone isn't enough for a code-first content architecture
+            // (Constitution Principle III): if the config in code changes after a Data Type was
+            // already seeded once, an environment that seeded it earlier would otherwise keep the
+            // stale configuration forever, silently drifting from what the code now says. This
+            // self-corrects it instead, the same way creation itself is idempotent.
+            if (!ConfigurationMatches(existing.ConfigurationData, intendedConfig))
+            {
+                existing.ConfigurationData = intendedConfig ?? new Dictionary<string, object>();
+                Attempt<IDataType, DataTypeOperationStatus> updateAttempt = await _dataTypeService.UpdateAsync(existing, seedingUserKey);
+                if (updateAttempt.Success is false)
+                {
+                    throw new InvalidOperationException($"Failed to update Data Type '{name}': {updateAttempt.Status}.");
+                }
+
+                return updateAttempt.Result;
+            }
+
             return existing;
         }
-
-        IDataEditor editor = _propertyEditors[editorAlias]
-            ?? throw new InvalidOperationException($"No property editor registered for alias '{editorAlias}'.");
 
         var dataType = new DataType(editor, _configurationEditorJsonSerializer)
         {
             Name = name,
         };
 
-        if (configurationObject is not null)
+        if (intendedConfig is not null)
         {
-            dataType.ConfigurationData = editor.GetConfigurationEditor()
-                .FromConfigurationObject(configurationObject, _configurationEditorJsonSerializer);
+            dataType.ConfigurationData = intendedConfig;
         }
 
         Attempt<IDataType, DataTypeOperationStatus> attempt = await _dataTypeService.CreateAsync(dataType, seedingUserKey);
@@ -65,6 +85,13 @@ public class ContentTypeHelpers
         }
 
         return attempt.Result;
+    }
+
+    private static bool ConfigurationMatches(IDictionary<string, object>? current, IDictionary<string, object>? intended)
+    {
+        string currentJson = System.Text.Json.JsonSerializer.Serialize(current ?? new Dictionary<string, object>());
+        string intendedJson = System.Text.Json.JsonSerializer.Serialize(intended ?? new Dictionary<string, object>());
+        return currentJson == intendedJson;
     }
 
     public sealed record PropertyDef(
@@ -305,7 +332,10 @@ public class ContentTypeHelpers
             Constants.PropertyEditors.Aliases.MediaPicker3,
             new MediaPicker3Configuration
             {
-                Filter = "image",
+                // Must match the real media type alias exactly (it's a case-sensitive string
+                // compare) — "image" (lowercase) silently matched nothing and left every Media
+                // Picker field with zero allowed types to pick or upload.
+                Filter = Constants.Conventions.MediaTypes.Image,
                 Multiple = multiple,
             });
 

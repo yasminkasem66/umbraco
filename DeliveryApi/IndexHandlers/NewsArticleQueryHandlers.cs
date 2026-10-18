@@ -33,10 +33,16 @@ public class NewsArticleFilterHandler : IFilterHandler
     }
 }
 
-/// <summary>Makes `sort=featuredOrder:` a recognized query option (see NewsArticleFilterHandler).</summary>
+/// <summary>
+/// Makes `sort=featuredOrder:` and `sort=publishedDate:` recognized query options (see
+/// NewsArticleFilterHandler).
+/// </summary>
 public class NewsArticleSortHandler : ISortHandler
 {
-    public bool CanHandle(string query) => query.StartsWith("featuredOrder:", StringComparison.OrdinalIgnoreCase);
+    private static readonly string[] FieldNames = ["featuredOrder", "publishedDate"];
+
+    public bool CanHandle(string query) =>
+        FieldNames.Any(field => query.StartsWith($"{field}:", StringComparison.OrdinalIgnoreCase));
 
     public SortOption BuildSortOption(string sort)
     {

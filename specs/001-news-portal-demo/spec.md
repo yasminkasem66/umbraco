@@ -15,6 +15,10 @@
 - Q: Should the public contact-submission capability include basic abuse protection (e.g., a rate limit on how many submissions one visitor can send in a short time), given it's a public, unauthenticated write endpoint with no API key currently in front of it? → A: No extra protection — field validation only (required fields + valid email format); no rate limit, CAPTCHA, or similar throttling is required for this demo.
 - Q: Should the Contact Submission free-text fields (Name, Subject, Message) have explicit maximum length limits, the way other content fields in this spec do, or should their length stay unconstrained beyond being required? → A: Set reasonable max lengths — Name 2-100 characters, Subject 3-150 characters, Message 10-2000 characters.
 
+### Session 2026-10-17
+
+- Q: Verification against the running app showed that a News Article detail request for an identifier that genuinely doesn't exist, and one for an article that exists but has no translation in the requested language, return the exact same not-found response (same status, same empty body) — a caller can't tell the two apart from a single response. Should the spec require those to be distinguishable in one call, even though the Delivery API's native detail endpoint can't be made to do that without adding a custom read endpoint (which Constitution Principle II restricts to write operations)? → A: No new endpoint — document the two-request client-side check (retry the same identifier without a language header; a successful response there means "exists, not translated," a not-found means "identifier is invalid") as the supported way to tell the two apart, and note that list-driven navigation already avoids needing this because list results carry each item's available languages.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Browse and Filter News Articles (Priority: P1)
@@ -151,7 +155,7 @@ As a site visitor, I want to submit a contact message with my name, email, subje
 
 ### Edge Cases
 
-- A visitor requests content in a language for which the editor has never published a translation: that content is treated as unavailable in that language (see Assumptions), not silently shown in the other language.
+- A visitor requests content in a language for which the editor has never published a translation: that content is treated as unavailable in that language (see Assumptions), not silently shown in the other language. This produces the same not-found result as an identifier that does not exist at all (FR-017) — see FR-017 for the supported way a caller distinguishes the two.
 - A News Article's assigned Category is later removed or unpublished in the backoffice: the article list/detail must continue to respond without error (exact display behavior is an editorial/content concern, not a custom-UI concern, per this feature's scope).
 - Two articles are given the same Featured Order value: both are returned, with a stable but unspecified tie-break order between them.
 - A list or featured-set request pages past the last available result: an empty page is returned, not an error.
@@ -177,7 +181,7 @@ As a site visitor, I want to submit a contact message with my name, email, subje
 - **FR-014**: System MUST persist every successfully validated contact message submission as a record reviewable by backoffice staff, including its submission date/time.
 - **FR-015**: System MUST NOT expose contact message submissions through any public read capability; they are backoffice-review-only.
 - **FR-016**: System MUST serve all public-facing content (News, Site Settings, About Us, Contact Us) in both English (default) and Arabic, selectable per request.
-- **FR-017**: System MUST treat content not yet published for a requested language as unavailable in that language rather than silently substituting the other language's content.
+- **FR-017**: System MUST treat content not yet published for a requested language as unavailable in that language rather than silently substituting the other language's content. A single detail request cannot distinguish "this identifier does not exist" from "this identifier exists but has no translation in the requested language" — both return the same not-found result (FR-006). A caller that needs to tell the two apart MUST retry the same identifier without a language qualifier: a successful result means the content exists but lacks that translation, while a repeated not-found result means the identifier itself is invalid. Callers that reach a detail view by following a list result do not need this check, since list results already carry each item's available languages (see Key Entities).
 - **FR-018**: System MUST support the native Draft → Publish content lifecycle for every content type in this feature, with no additional editorial review/approval stage.
 
 ### Key Entities
@@ -268,6 +272,7 @@ All fields marked (*) are mandatory.
 ## Assumptions
 
 - Bilingual behavior follows Umbraco's native per-culture publish state: if an editor has not published a node's Arabic variant, requests for that content in Arabic are treated as unavailable in that language rather than falling back to English.
+- Every piece of content in this feature is expected to be published in English (the default language) at minimum, even when Arabic is added later or omitted entirely. This is what makes the FR-017 "retry without a language qualifier" check a reliable way to distinguish "not translated" from "does not exist" — an editor publishing Arabic-only content (skipping English) is outside this assumption and is not a scenario this feature seeds or tests for.
 - Pagination uses a reasonable fixed page size, since no specific size was requested; the exact number is a planning-level decision, not a scope decision.
 - There is no enforced maximum number of simultaneously Featured Articles; the editor's own selection and ordering discipline governs how many are shown.
 - A contact message submission does not require an outbound email notification to staff for this demo — visibility to backoffice staff via the stored record is sufficient. (Reflects the source brief's framing of email notification as optional.)
