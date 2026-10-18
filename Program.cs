@@ -16,6 +16,13 @@ builder.Services.AddCors(options =>
               .AllowAnyMethod());
 });
 
+// Contact-form validation errors (contracts/contact-submission.md) use ContactController's own
+// { status, errors } shape instead of the framework's default ProblemDetails 400 body.
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(options =>
+{
+    options.SuppressModelStateInvalidFilter = true;
+});
+
 
 WebApplication app = builder.Build();
 
