@@ -1,0 +1,13 @@
+bin/
+obj/
+umbraco/Data/
+umbraco/Logs/
+umbraco/TEMP/
+wwwroot/media/
+.git/
+.vs/
+.vscode/
+specs/
+docs/
+*.user
+TASK.md

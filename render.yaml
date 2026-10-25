@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: news-portal-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /umbraco/delivery/api/v2/content?filter=contentType:siteSettings
+    envVars:
+      # Required — set your own value when Render prompts for it during Blueprint creation.
+      # Must be 10+ characters (Umbraco 18's minimum). Do not reuse the password committed in
+      # appsettings.json for local development.
+      - key: Umbraco__CMS__Unattended__UnattendedUserPassword
+        sync: false
+      # Optional — override the demo admin email for this deployment.
+      - key: Umbraco__CMS__Unattended__UnattendedUserEmail
+        sync: false

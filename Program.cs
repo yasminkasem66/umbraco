@@ -8,10 +8,15 @@ builder.CreateUmbracoBuilder()
     .AddComposers()
     .Build();
 
+// Additional allowed origins (e.g. a deployed frontend) can be added without a code change via
+// the "AngularApp:AdditionalOrigins" config array — see appsettings.Production.json.
+string[] additionalOrigins = builder.Configuration.GetSection("AngularApp:AdditionalOrigins").Get<string[]>() ?? [];
+string[] corsOrigins = ["http://localhost:4200", .. additionalOrigins];
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AngularApp", policy =>
-        policy.WithOrigins("http://localhost:4200")
+        policy.WithOrigins(corsOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod());
 });
