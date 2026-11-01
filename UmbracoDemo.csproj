@@ -36,6 +36,11 @@
   </ItemGroup>
 
 
+  <ItemGroup>
+    <!-- Starter photos imported into Media on first run by Composers/MediaSeedingHelper.cs -->
+    <None Update="SeedData\images\*.jpg;SeedData\images\*.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- Razor files are needed for the backoffice to work correctly -->
     <CopyRazorGenerateFilesToPublishDirectory>true</CopyRazorGenerateFilesToPublishDirectory>

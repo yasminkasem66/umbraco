@@ -9,21 +9,14 @@ using Umbraco.Extensions;
 namespace UmbracoDemo.Composers;
 
 /// <summary>
-/// Creates minimal placeholder image Media items so the mandatory Media Picker properties in
-/// data-model.md (Featured Image, Logo, Hero Image, Category Icon) have something real to
-/// reference. A tiny solid-colour PNG stands in for real demo photography.
+/// Imports the starter photos committed under SeedData/images (see CREDITS.md there) as Image
+/// Media items, so the mandatory Media Picker properties in data-model.md (Featured Image, Logo,
+/// Hero Image) reference real pictures. The files are copied to the build/publish output by
+/// UmbracoDemo.csproj, which is why they're resolved from <see cref="AppContext.BaseDirectory"/>.
 /// </summary>
 public class MediaSeedingHelper
 {
-    // A minimal valid 1x1 solid-colour PNG.
-    private static readonly byte[] PlaceholderPng =
-    [
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
-        0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-        0x44, 0xAE, 0x42, 0x60, 0x82,
-    ];
+    private static readonly string SeedImagesDirectory = Path.Combine(AppContext.BaseDirectory, "SeedData", "images");
 
     private readonly IMediaService _mediaService;
     private readonly MediaFileManager _mediaFileManager;
@@ -45,7 +38,7 @@ public class MediaSeedingHelper
         _contentTypeBaseServiceProvider = contentTypeBaseServiceProvider;
     }
 
-    public IMedia EnsurePlaceholderImage(string name)
+    public IMedia EnsureImage(string name, string fileName)
     {
         IMedia? existing = _mediaService.GetRootMedia().FirstOrDefault(m => m.Name == name);
         if (existing is not null)
@@ -53,16 +46,22 @@ public class MediaSeedingHelper
             return existing;
         }
 
+        string path = Path.Combine(SeedImagesDirectory, fileName);
+        if (System.IO.File.Exists(path) is false)
+        {
+            throw new FileNotFoundException($"Seed image '{fileName}' was not found. Expected it at '{path}'.", path);
+        }
+
         IMedia media = _mediaService.CreateMedia(name, Constants.System.Root, Constants.Conventions.MediaTypes.Image);
 
-        using var stream = new MemoryStream(PlaceholderPng);
+        using FileStream stream = System.IO.File.OpenRead(path);
         media.SetValue(
             _mediaFileManager,
             _mediaUrlGeneratorCollection,
             _shortStringHelper,
             _contentTypeBaseServiceProvider,
             Constants.Conventions.Media.File,
-            $"{name.ToLowerInvariant().Replace(' ', '-')}.png",
+            fileName,
             stream);
 
         _mediaService.Save(media);

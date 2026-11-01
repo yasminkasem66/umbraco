@@ -6,6 +6,7 @@ using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
+using static UmbracoDemo.Composers.StarterContentData;
 
 namespace UmbracoDemo.Composers;
 
@@ -20,14 +21,27 @@ public class StarterContentSeedingComposer : IComposer
 /// <summary>
 /// The single startup entry point for this feature's content architecture (research.md §1):
 /// ensures languages, then every Document Type (in dependency order, via the installer classes
-/// from the other Composers/*.cs files), then seeds demo content. Deliberately the *only*
-/// <see cref="UmbracoApplicationStartingNotification"/> handler in this feature, so setup always
-/// runs in a guaranteed order instead of depending on notification-handler registration order.
+/// from the other Composers/*.cs files), then seeds the starter content in StarterContentData.cs.
+/// Deliberately the *only* <see cref="UmbracoApplicationStartingNotification"/> handler in this
+/// feature, so setup always runs in a guaranteed order instead of depending on notification-handler
+/// registration order.
 /// </summary>
+/// <remarks>
+/// Each node is created if missing, and also re-populated if it still holds the placeholder copy
+/// an earlier version of this seeder wrote (detected via the Legacy* markers below) — so existing
+/// databases pick up the real starter content without losing node keys, while anything an editor
+/// has changed since is left alone.
+/// </remarks>
 public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApplicationStartingNotification>
 {
     private static readonly Guid SeedingUserKey = Constants.Security.SuperUserKey;
     private const int SeedingUserId = Constants.Security.SuperUserId;
+
+    private const string LegacyArticleSummaryMarker = "a demo summary long enough";
+    private const string LegacyCategoryColour = "#2563eb";
+    private const string LegacySiteSettingsMarker = "headless Umbraco showcase site";
+    private const string LegacyAboutUsMarker = "showcase a fully headless Umbraco";
+    private const string LegacyContactEmail = "hello@newsportaldemo.test";
 
     private readonly LanguageSeedingInstaller _languages;
     private readonly SiteChromeContentTypesInstaller _siteChrome;
@@ -40,6 +54,7 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
     private readonly IContentService _contentService;
     private readonly IContentTypeService _contentTypeService;
     private readonly IJsonSerializer _jsonSerializer;
+    private readonly ILogger<StarterContentSeedingHandler> _logger;
 
     public StarterContentSeedingHandler(
         LanguageSeedingInstaller languages,
@@ -52,7 +67,8 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
         BlockListValueBuilder blockLists,
         IContentService contentService,
         IContentTypeService contentTypeService,
-        IJsonSerializer jsonSerializer)
+        IJsonSerializer jsonSerializer,
+        ILogger<StarterContentSeedingHandler> logger)
     {
         _languages = languages;
         _siteChrome = siteChrome;
@@ -65,6 +81,7 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
         _contentService = contentService;
         _contentTypeService = contentTypeService;
         _jsonSerializer = jsonSerializer;
+        _logger = logger;
     }
 
     public async Task HandleAsync(UmbracoApplicationStartingNotification notification, CancellationToken cancellationToken)
@@ -89,8 +106,8 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
         }
 
         SeedSiteSettings(siteRoot, siteSettingsType, en, ar);
-        IReadOnlyList<IContent> categories = SeedNewsCategories(siteRoot, newsCategoryType, en, ar);
-        SeedNewsArticles(categories, newsArticleType, en, ar);
+        (IContent newsFolder, IReadOnlyDictionary<string, IContent> categories) = SeedNewsCategories(siteRoot, newsCategoryType, en, ar);
+        SeedNewsArticles(newsFolder, categories, newsArticleType, en, ar);
         SeedAboutUs(siteRoot, aboutUsType, en, ar);
         IContent contactUs = SeedContactUs(siteRoot, contactUsType, en, ar);
 
@@ -106,61 +123,40 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
     private void SeedSiteSettings(IContent siteRoot, IContentType siteSettingsType, string en, string ar)
     {
         (IContent siteSettings, bool isNew) = EnsureSingletonChild(siteRoot, siteSettingsType.Alias, "Site Settings");
-        if (isNew is false)
+        if (isNew is false && ContainsMarker(siteSettings, "footerAboutText", en, LegacySiteSettingsMarker) is false)
         {
             return;
         }
 
-        IMedia logo = _media.EnsurePlaceholderImage("Site Logo");
+        IMedia logo = _media.EnsureImage("Delta News Logo", "delta-news-logo.png");
         siteSettings.SetValue("logo", ToDocumentUdi(logo));
 
         IContentType link = GetElementType("link");
         IContentType footerLinkColumn = GetElementType("footerLinkColumn");
         IContentType socialLink = GetElementType("socialLink");
 
-        foreach ((string culture, string homeLabel, string aboutLabel) in new[]
-                 {
-                     (en, "Home", "About"),
-                     (ar, "الرئيسية", "من نحن"),
-                 })
+        foreach ((string culture, SiteSettings.Localized copy) in new[] { (en, SiteSettings.En), (ar, SiteSettings.Ar) })
         {
-            siteSettings.SetCultureName(culture == en ? "Site Settings" : "إعدادات الموقع", culture);
+            siteSettings.SetCultureName(copy.Name, culture);
 
-            string navigation = _blockLists.Build(link,
-            [
-                new Dictionary<string, object> { ["label"] = homeLabel, ["url"] = "/", ["openInNewTab"] = false },
-                new Dictionary<string, object> { ["label"] = aboutLabel, ["url"] = "/about-us", ["openInNewTab"] = false },
-            ]);
-            siteSettings.SetValue("primaryNavigation", navigation, culture);
+            siteSettings.SetValue("primaryNavigation", BuildLinks(link, copy.Navigation), culture);
+            siteSettings.SetValue("footerAboutText", BuildRichTextValue(copy.FooterAboutHtml), culture);
 
-            siteSettings.SetValue("footerAboutText", BuildRichTextValue(culture == en
-                ? "<p>News Portal Demo is a headless Umbraco showcase site.</p>"
-                : "<p>بوابة الأخبار التجريبية هي موقع عرض توضيحي بدون واجهة يعتمد على Umbraco.</p>"), culture);
+            (string Label, string Url)[] sectionLinks = Categories
+                .Select(c => (culture == en ? c.En : c.Ar, $"/news?category={c.Slug}"))
+                .ToArray();
 
             string footerColumns = _blockLists.Build(footerLinkColumn,
             [
-                new Dictionary<string, object>
-                {
-                    ["columnTitle"] = culture == en ? "Company" : "الشركة",
-                    ["links"] = _blockLists.Build(link,
-                    [
-                        new Dictionary<string, object> { ["label"] = aboutLabel, ["url"] = "/about-us", ["openInNewTab"] = false },
-                    ]),
-                },
+                new Dictionary<string, object> { ["columnTitle"] = copy.SectionsColumnTitle, ["links"] = BuildLinks(link, sectionLinks) },
+                new Dictionary<string, object> { ["columnTitle"] = copy.CompanyColumnTitle, ["links"] = BuildLinks(link, copy.CompanyLinks) },
             ]);
             siteSettings.SetValue("footerLinkColumns", footerColumns, culture);
 
-            siteSettings.SetValue("copyrightText", culture == en
-                ? "(c) News Portal Demo"
-                : "(c) بوابة الأخبار التجريبية", culture);
+            siteSettings.SetValue("copyrightText", copy.Copyright, culture);
         }
 
-        string socialLinks = _blockLists.Build(socialLink,
-        [
-            new Dictionary<string, object> { ["platform"] = "Twitter/X", ["url"] = "https://x.com/example" },
-            new Dictionary<string, object> { ["platform"] = "Facebook", ["url"] = "https://facebook.com/example" },
-        ]);
-        siteSettings.SetValue("socialLinks", socialLinks);
+        siteSettings.SetValue("socialLinks", BuildSocialLinks(socialLink, SiteSettings.SocialLinks));
 
         _contentService.Save(siteSettings, SeedingUserId);
         Publish(siteSettings, [en, ar]);
@@ -168,7 +164,8 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
 
     // --- News Categories (User Story 1 / 4) ---------------------------------------------------
 
-    private IReadOnlyList<IContent> SeedNewsCategories(IContent siteRoot, IContentType newsCategoryType, string en, string ar)
+    private (IContent NewsFolder, IReadOnlyDictionary<string, IContent> Categories) SeedNewsCategories(
+        IContent siteRoot, IContentType newsCategoryType, string en, string ar)
     {
         (IContent newsFolder, bool newsFolderIsNew) = EnsureSingletonChild(siteRoot, "newsFolder", "News");
         if (newsFolderIsNew)
@@ -181,95 +178,73 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
             Publish(newsFolder, ["*"]);
         }
 
-        (string enName, string arName)[] seeds =
-        [
-            ("Technology", "تقنية"),
-            ("Sports", "رياضة"),
-            ("Business", "أعمال"),
-        ];
+        var result = new Dictionary<string, IContent>();
 
-        var result = new List<IContent>();
-
-        foreach ((string enName, string arName) in seeds)
+        foreach (CategorySeed seed in Categories)
         {
-            (IContent category, bool isNew) = EnsureSingletonChild(newsFolder, newsCategoryType.Alias, enName, matchByEnglishName: enName);
+            (IContent category, bool isNew) = EnsureSingletonChild(newsFolder, newsCategoryType.Alias, seed.En, matchByEnglishName: seed.En);
 
-            if (isNew)
+            // Earlier versions of this seeder gave every category the same placeholder colour.
+            bool hasLegacyColour = category.GetValue<string>("colour") == LegacyCategoryColour && seed.Colour != LegacyCategoryColour;
+
+            if (isNew || hasLegacyColour)
             {
-                category.SetCultureName(enName, en);
-                category.SetCultureName(arName, ar);
-                category.SetValue("colour", "#2563eb");
+                category.SetCultureName(seed.En, en);
+                category.SetCultureName(seed.Ar, ar);
+                category.SetValue("colour", seed.Colour);
 
                 _contentService.Save(category, SeedingUserId);
                 Publish(category, [en, ar]);
             }
 
-            result.Add(category);
+            result[seed.En] = category;
         }
 
-        return result;
+        return (newsFolder, result);
     }
 
     // --- News Articles (User Stories 1-3) ------------------------------------------------------
 
-    private void SeedNewsArticles(IReadOnlyList<IContent> categories, IContentType newsArticleType, string en, string ar)
+    private void SeedNewsArticles(IContent newsFolder, IReadOnlyDictionary<string, IContent> categories, IContentType newsArticleType, string en, string ar)
     {
-        IContent newsFolder = _contentService.GetPagedChildren(
-                _contentService.GetRootContent().First(c => c.ContentType.Alias == "siteRoot").Id, 0, 50, out _)
-            .First(c => c.ContentType.Alias == "newsFolder");
+        Dictionary<string, IContent> existingArticles = _contentService.GetPagedChildren(newsFolder.Id, 0, 1000, out _)
+            .Where(c => c.ContentType.Alias == newsArticleType.Alias && c.Name is not null)
+            .GroupBy(c => c.Name!)
+            .ToDictionary(g => g.Key, g => g.First());
 
-        if (_contentService.CountChildren(newsFolder.Id, newsArticleType.Alias) > 0)
+        foreach (ArticleSeed seed in Articles)
         {
-            return;
-        }
+            if (existingArticles.TryGetValue(seed.En.Title, out IContent? article))
+            {
+                if (ContainsMarker(article, "summary", en, LegacyArticleSummaryMarker) is false)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                article = _contentService.Create(seed.En.Title, newsFolder, newsArticleType.Alias, SeedingUserId);
+            }
 
-        IMedia articleImage = _media.EnsurePlaceholderImage("Article Photo");
+            IMedia featuredImage = _media.EnsureImage(seed.En.Title, seed.Image);
+            IMedia[] gallery = seed.Gallery
+                .Select((fileName, i) => _media.EnsureImage($"{seed.En.Title} ({i + 1})", fileName))
+                .ToArray();
 
-        var articles = new[]
-        {
-            new { Title = "City Unveils New Tech Hub", Category = 0, Featured = true, Order = 1, Bilingual = true },
-            new { Title = "Local Team Wins Championship", Category = 1, Featured = true, Order = 2, Bilingual = true },
-            new { Title = "Startup Raises Seed Funding", Category = 2, Featured = true, Order = 3, Bilingual = true },
-            new { Title = "AI Adoption Grows Among Small Businesses", Category = 0, Featured = false, Order = 0, Bilingual = true },
-            new { Title = "Marathon Draws Record Crowds", Category = 1, Featured = false, Order = 0, Bilingual = true },
-            new { Title = "Regional Bank Reports Strong Quarter", Category = 2, Featured = false, Order = 0, Bilingual = false },
-            new { Title = "New Data Centre Opens Downtown", Category = 0, Featured = false, Order = 0, Bilingual = false },
-            new { Title = "Youth League Expands to Two New Cities", Category = 1, Featured = false, Order = 0, Bilingual = false },
-        };
+            article.SetValue("category", ToDocumentUdi(categories[seed.Category]));
+            article.SetValue("featuredImage", ToDocumentUdi(featuredImage));
+            article.SetValue("gallery", string.Join(",", gallery.Select(ToDocumentUdi)));
+            article.SetValue("publishedDate", DateTime.UtcNow.Date.AddDays(-seed.DaysAgo).AddHours(9));
+            article.SetValue("isFeatured", seed.Featured ? 1 : 0);
+            article.SetValue("featuredOrder", seed.FeaturedOrder);
 
-        int i = 0;
-        foreach (var a in articles)
-        {
-            i++;
-            IContent article = _contentService.Create(a.Title, newsFolder, newsArticleType.Alias, SeedingUserId);
-
-            string slug = a.Title.ToLowerInvariant().Replace(" ", "-").Replace(",", string.Empty);
-
-            article.SetCultureName(a.Title, en);
-            article.SetValue("urlSlug", slug, en);
-            article.SetValue("summary", $"{a.Title} - a demo summary long enough to satisfy the fifty to three hundred character minimum required for News Article summaries in this showcase site.", en);
-            article.SetValue("body", BuildRichTextValue($"<p>{a.Title}. This is placeholder body copy for the News Portal Demo, seeded automatically so every endpoint returns real data.</p>"), en);
-            article.SetValue("author", "Newsroom Staff", en);
-            article.SetValue("tags", _jsonSerializer.Serialize(new[] { "demo", "news" }), en);
-
-            article.SetValue("category", ToDocumentUdi(categories[a.Category]));
-            article.SetValue("featuredImage", ToDocumentUdi(articleImage));
-            article.SetValue("publishedDate", DateTime.UtcNow.AddDays(-i));
-            article.SetValue("isFeatured", a.Featured ? 1 : 0);
-            article.SetValue("featuredOrder", a.Order);
+            SetArticleCulture(article, seed.En, seed.Slug, en);
 
             var culturesToPublish = new List<string> { en };
 
-            if (a.Bilingual)
+            if (seed.Ar is not null)
             {
-                string arTitle = $"{a.Title} (عربي)";
-                article.SetCultureName(arTitle, ar);
-                article.SetValue("urlSlug", $"{slug}-ar", ar);
-                article.SetValue("summary", "هذا ملخص تجريبي باللغة العربية لهذا المقال ضمن بوابة الأخبار التجريبية، وهو طويل بما يكفي لتجاوز الحد الأدنى للأحرف المطلوب.", ar);
-                article.SetValue("body", BuildRichTextValue("<p>هذا محتوى تجريبي باللغة العربية لهذا المقال في بوابة الأخبار التجريبية.</p>"), ar);
-                article.SetValue("author", "فريق التحرير", ar);
-                article.SetValue("tags", _jsonSerializer.Serialize(new[] { "demo", "أخبار" }), ar);
-
+                SetArticleCulture(article, seed.Ar, $"{seed.Slug}-ar", ar);
                 culturesToPublish.Add(ar);
             }
 
@@ -278,36 +253,40 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
         }
     }
 
+    private void SetArticleCulture(IContent article, LocalizedArticle copy, string slug, string culture)
+    {
+        article.SetCultureName(copy.Title, culture);
+        article.SetValue("urlSlug", slug, culture);
+        article.SetValue("summary", copy.Summary, culture);
+        article.SetValue("body", BuildRichTextValue(copy.BodyHtml), culture);
+        article.SetValue("author", copy.Author, culture);
+        article.SetValue("tags", _jsonSerializer.Serialize(copy.Tags), culture);
+    }
+
     // --- About Us (User Story 5) ---------------------------------------------------------------
 
     private void SeedAboutUs(IContent siteRoot, IContentType aboutUsType, string en, string ar)
     {
         (IContent aboutUs, bool isNew) = EnsureSingletonChild(siteRoot, aboutUsType.Alias, "About Us");
-        if (isNew is false)
+        if (isNew is false && ContainsMarker(aboutUs, "body", en, LegacyAboutUsMarker) is false)
         {
             return;
         }
 
-        IMedia hero = _media.EnsurePlaceholderImage("About Us Hero");
+        IMedia hero = _media.EnsureImage("About Us Newsroom", AboutUs.HeroImage);
         aboutUs.SetValue("heroImage", ToDocumentUdi(hero));
 
         IContentType statItem = GetElementType("statItem");
 
-        foreach ((string culture, string title, string heroText, string body) in new[]
-                 {
-                     (en, "About Us", "Who we are", "<p>News Portal Demo exists to showcase a fully headless Umbraco content architecture.</p>"),
-                     (ar, "من نحن", "من نحن", "<p>تهدف بوابة الأخبار التجريبية إلى عرض بنية محتوى Umbraco بدون واجهة بالكامل.</p>"),
-                 })
+        foreach ((string culture, AboutUs.Localized copy) in new[] { (en, AboutUs.En), (ar, AboutUs.Ar) })
         {
-            aboutUs.SetCultureName(title, culture);
-            aboutUs.SetValue("heroText", heroText, culture);
-            aboutUs.SetValue("body", BuildRichTextValue(body), culture);
+            aboutUs.SetCultureName(copy.Title, culture);
+            aboutUs.SetValue("heroText", copy.HeroText, culture);
+            aboutUs.SetValue("body", BuildRichTextValue(copy.BodyHtml), culture);
 
-            string stats = _blockLists.Build(statItem,
-            [
-                new Dictionary<string, object> { ["label"] = culture == en ? "Articles" : "المقالات", ["value"] = "8+" },
-                new Dictionary<string, object> { ["label"] = culture == en ? "Categories" : "الفئات", ["value"] = "3" },
-            ]);
+            string stats = _blockLists.Build(statItem, copy.Stats
+                .Select(s => (IReadOnlyDictionary<string, object>)new Dictionary<string, object> { ["label"] = s.Label, ["value"] = s.Value })
+                .ToList());
             aboutUs.SetValue("stats", stats, culture);
         }
 
@@ -320,32 +299,22 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
     private IContent SeedContactUs(IContent siteRoot, IContentType contactUsType, string en, string ar)
     {
         (IContent contactUs, bool isNew) = EnsureSingletonChild(siteRoot, contactUsType.Alias, "Contact Us");
-        if (isNew is false)
+        if (isNew is false && contactUs.GetValue<string>("email") != LegacyContactEmail)
         {
             return contactUs;
         }
 
-        contactUs.SetValue("phone", "+1-555-0100");
-        contactUs.SetValue("email", "hello@newsportaldemo.test");
-        contactUs.SetValue("mapCoordinates", "30.0444,31.2357");
+        contactUs.SetValue("phone", ContactUs.Phone);
+        contactUs.SetValue("email", ContactUs.Email);
+        contactUs.SetValue("mapCoordinates", ContactUs.MapCoordinates);
+        contactUs.SetValue("socialLinks", BuildSocialLinks(GetElementType("socialLink"), SiteSettings.SocialLinks));
 
-        IContentType socialLinkType = GetElementType("socialLink");
-        string socialLinks = _blockLists.Build(socialLinkType,
-        [
-            new Dictionary<string, object> { ["platform"] = "Twitter/X", ["url"] = "https://x.com/example" },
-        ]);
-        contactUs.SetValue("socialLinks", socialLinks);
-
-        foreach ((string culture, string title, string intro, string address, string hours) in new[]
-                 {
-                     (en, "Contact Us", "We would love to hear from you.", "123 Demo Street, Cairo", "Sun-Thu, 9am-5pm"),
-                     (ar, "اتصل بنا", "يسعدنا التواصل معك.", "١٢٣ شارع تجريبي، القاهرة", "الأحد-الخميس، ٩ص-٥م"),
-                 })
+        foreach ((string culture, ContactUs.Localized copy) in new[] { (en, ContactUs.En), (ar, ContactUs.Ar) })
         {
-            contactUs.SetCultureName(title, culture);
-            contactUs.SetValue("intro", intro, culture);
-            contactUs.SetValue("address", address, culture);
-            contactUs.SetValue("officeHours", hours, culture);
+            contactUs.SetCultureName(copy.Title, culture);
+            contactUs.SetValue("intro", copy.Intro, culture);
+            contactUs.SetValue("address", copy.Address, culture);
+            contactUs.SetValue("officeHours", copy.OfficeHours, culture);
         }
 
         _contentService.Save(contactUs, SeedingUserId);
@@ -370,10 +339,10 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
     }
 
     /// <summary>
-    /// Returns the existing singleton child if one exists (so every Seed* method above can skip
-    /// re-populating it), otherwise creates a new, empty shell ready for the caller to populate,
-    /// save, and publish. <paramref name="matchByEnglishName"/> narrows the "does it already
-    /// exist" check for content types with more than one seeded instance (News Category).
+    /// Returns the existing singleton child if one exists (so every Seed* method above can decide
+    /// whether to re-populate it), otherwise creates a new, empty shell ready for the caller to
+    /// populate, save, and publish. <paramref name="matchByEnglishName"/> narrows the "does it
+    /// already exist" check for content types with more than one seeded instance (News Category).
     /// </summary>
     private (IContent Content, bool IsNew) EnsureSingletonChild(IContent parent, string contentTypeAlias, string name, string? matchByEnglishName = null)
     {
@@ -391,7 +360,31 @@ public class StarterContentSeedingHandler : INotificationAsyncHandler<UmbracoApp
         return (content, true);
     }
 
-    private void Publish(IContent content, string[] cultures) => _contentService.Publish(content, cultures, SeedingUserId);
+    private static bool ContainsMarker(IContent content, string propertyAlias, string culture, string marker) =>
+        content.GetValue<string>(propertyAlias, culture)?.Contains(marker, StringComparison.Ordinal) == true;
+
+    private void Publish(IContent content, string[] cultures)
+    {
+        PublishResult result = _contentService.Publish(content, cultures, SeedingUserId);
+        if (result.Success is false)
+        {
+            _logger.LogWarning(
+                "Starter content '{Name}' could not be published ({Result}). Invalid properties: {Properties}",
+                content.Name,
+                result.Result,
+                string.Join(", ", result.InvalidProperties?.Select(p => p.Alias) ?? []));
+        }
+    }
+
+    private string BuildLinks(IContentType linkType, IEnumerable<(string Label, string Url)> links) =>
+        _blockLists.Build(linkType, links
+            .Select(l => (IReadOnlyDictionary<string, object>)new Dictionary<string, object> { ["label"] = l.Label, ["url"] = l.Url, ["openInNewTab"] = false })
+            .ToList());
+
+    private string BuildSocialLinks(IContentType socialLinkType, IEnumerable<(string Platform, string Url)> links) =>
+        _blockLists.Build(socialLinkType, links
+            .Select(l => (IReadOnlyDictionary<string, object>)new Dictionary<string, object> { ["platform"] = l.Platform, ["url"] = l.Url })
+            .ToList());
 
     private string BuildRichTextValue(string html)
     {
